@@ -16,7 +16,7 @@ jobs:
       mysql:
         image: mysql:5.7
         env:
-          MYSQL_ROOT_PASSWORD: root
+          MYSQL_ROOT_PASSWORD: ${{ secrets.MYSQL_ROOT_PASSWORD }}
           MYSQL_DATABASE: symfony_test
         ports:
           - 3306:3306
@@ -27,7 +27,7 @@ jobs:
           --health-retries=3
 
     env:
-      DATABASE_URL: mysql://root:root@127.0.0.1:3306/symfony_test
+      DATABASE_URL: mysql://root:${{ secrets.MYSQL_ROOT_PASSWORD }}@127.0.0.1:3306/symfony_test
 
     steps:
     - name: Checkout code
@@ -40,15 +40,23 @@ jobs:
         extensions: mbstring, intl, pdo_mysql
         tools: composer
 
+    - name: Cache Composer dependencies
+      uses: actions/cache@v2
+      with:
+        path: vendor
+        key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-composer-
+
     - name: Install Composer dependencies
-      run: rm composer.lock && composer install --prefer-dist --no-progress --no-suggest --no-interaction
+      run: composer install --prefer-dist --no-progress --no-suggest --no-interaction
 
     - name: Create .env.test.local
       run: |
-        echo 'DATABASE_URL="mysql://root:root@127.0.0.1:3306/symfony_test"' > .env.test.local
+        echo 'DATABASE_URL="mysql://root:${{ secrets.MYSQL_ROOT_PASSWORD }}@127.0.0.1:3306/symfony_test"' > .env.test.local
 
     - name: Run database migrations
-      run: php bin/console
+      run: php bin/console doctrine:migrations:migrate --no-interaction
 
   analyze-static-code:
     runs-on: ubuntu-latest
@@ -65,11 +73,19 @@ jobs:
         extensions: mbstring, intl, pdo_mysql
         tools: phpstan
 
+    - name: Cache Composer dependencies
+      uses: actions/cache@v2
+      with:
+        path: vendor
+        key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-composer-
+
     - name: Install dependencies
-      run:  rm composer.lock && composer install --prefer-dist --no-progress --no-suggest --no-interaction
+      run: composer install --prefer-dist --no-progress --no-suggest --no-interaction
 
     - name: Run static analysis
-      run: vendor/bin/phpstan analyse ./public/index.php
+      run: vendor/bin/phpstan analyse -c phpstan.neon
 
   run-unit-tests:
     runs-on: ubuntu-latest
@@ -86,11 +102,25 @@ jobs:
         extensions: mbstring, intl, pdo_mysql
         tools: phpunit
 
-    - name: Install dependencies
-      run:  rm composer.lock && composer install --prefer-dist --no-progress --no-suggest --no-interaction
+    - name: Cache Composer dependencies
+      uses: actions/cache@v2
+      with:
+        path: vendor
+        key: ${{ runner.os }}-composer-${{ hashFiles('**/composer.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-composer-
 
-    - name: Run unit tests
-      run: vendor/bin/phpunit
+    - name: Install dependencies
+      run: composer install --prefer-dist --no-progress --no-suggest --no-interaction
+
+    - name: Run unit tests with coverage
+      run: vendor/bin/phpunit --coverage-text --coverage-clover=coverage.xml
+
+    - name: Upload test report
+      uses: actions/upload-artifact@v2
+      with:
+        name: test-report
+        path: coverage.xml
 
   security-scan:
     runs-on: ubuntu-latest
@@ -107,3 +137,6 @@ jobs:
 
     - name: Run security analysis
       run: symfony check:security
+
+    - name: Run SensioLabs Security Checker
+      run: symfony security:check
